@@ -7,6 +7,7 @@ import {
   Select,
   Toggle,
   CardSkeleton,
+  ModelSelectModal,
 } from "@/shared/components";
 
 // API key management. Every key belongs to a tier; the tier supplies the cost
@@ -22,7 +23,19 @@ const BLANK = {
   balance: "100000",
   unlimited: false,
   isActive: true,
+  // Model patterns this key may call. ["*"] is unrestricted and is also the
+  // default for keys created before the allow-list existed, so an untouched
+  // form saves back exactly the same thing it read.
+  allowedModels: ["*"],
 };
+
+// Patterns a user may type by hand in the allow-list. The picker produces
+// exact ids, so these only exist for "everything" and prefix families.
+const WILDCARD = "*";
+
+function isUnrestricted(patterns) {
+  return !patterns || patterns.length === 0 || patterns.includes(WILDCARD);
+}
 
 function fmtBalance(n) {
   const v = Number(n) || 0;
@@ -48,15 +61,29 @@ export default function KeysPage() {
   const [revealed, setRevealed] = useState({});
   const [filterTier, setFilterTier] = useState("");
   const [tierLoadError, setTierLoadError] = useState("");
+  const [showModelSelect, setShowModelSelect] = useState(false);
+  // Provider/model lists the picker needs. Loaded with the keys, and a failure
+  // is surfaced in the modal rather than leaving an empty picker that looks
+  // like "this provider has no models".
+  const [providers, setProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
 
   const load = useCallback(async () => {
     try {
-      const [kr, gr] = await Promise.all([
+      const [kr, gr, pr, ar] = await Promise.all([
         fetch("/api/keys"),
         fetch("/api/user-groups"),
+        // Feeds the model allow-list picker. Loaded on the same pass so opening
+        // the modal never has to wait on a second round of fetches.
+        fetch("/api/providers"),
+        fetch("/api/models/alias"),
       ]);
       const kj = await kr.json();
       const gj = await gr.json();
+      const pj = pr.ok ? await pr.json().catch(() => ({})) : {};
+      const aj = ar.ok ? await ar.json().catch(() => ({})) : {};
+      if (pr.ok) setProviders(pj.connections || []);
+      if (ar.ok) setModelAliases(aj.aliases || {});
       if (kr.ok) setKeys(kj.keys || []);
       // A failed or non-JSON tier fetch must not silently leave `tiers` empty:
       // every key then renders as "no tier" even though it has one. Fall back
@@ -114,9 +141,32 @@ export default function KeysPage() {
       balance: String(k.balance ?? 0),
       unlimited: !!k.unlimited,
       isActive: !!k.isActive,
+      // A key saved before the allow-list existed reads back as ["*"]; keep
+      // that shape so an edit that does not touch models saves no change.
+      allowedModels: k.allowedModels?.length ? k.allowedModels : [WILDCARD],
     });
     setError("");
     setModalOpen(true);
+  };
+
+  const handleAddModel = (model) => {
+    setForm((f) => {
+      // Selecting the first specific model drops the wildcard: leaving "*"
+      // alongside real ids would make the restriction a no-op.
+      const base = isUnrestricted(f.allowedModels) ? [] : f.allowedModels;
+      if (base.includes(model.value)) return f;
+      return { ...f, allowedModels: [...base, model.value] };
+    });
+  };
+
+  const handleDeselectModel = (model) => {
+    setForm((f) => {
+      const next = (f.allowedModels || []).filter((m) => m !== model.value);
+      // Emptying the list means "no models", which would lock the key out of
+      // everything. Fall back to unrestricted, which is the least surprising
+      // state for a key someone is actively editing.
+      return { ...f, allowedModels: next.length ? next : [WILDCARD] };
+    });
   };
 
   const save = async () => {
@@ -132,6 +182,7 @@ export default function KeysPage() {
         balance: Number(form.balance) || 0,
         unlimited: form.unlimited,
         isActive: form.isActive,
+        allowedModels: form.allowedModels?.length ? form.allowedModels : [WILDCARD],
       };
 
       const url = editing ? `/api/keys/${editing.id}` : "/api/keys";
@@ -309,6 +360,21 @@ export default function KeysPage() {
                         </dd>
                       </div>
                       <div className="flex gap-1.5">
+                        <dt className="text-text-muted">Model</dt>
+                        <dd
+                          className="font-mono text-text-primary"
+                          title={
+                            isUnrestricted(k.allowedModels)
+                              ? "This key may call any model the router exposes."
+                              : k.allowedModels.join("\n")
+                          }
+                        >
+                          {isUnrestricted(k.allowedModels)
+                            ? "all"
+                            : `${k.allowedModels.length} dipilih`}
+                        </dd>
+                      </div>
+                      <div className="flex gap-1.5">
                         <dt className="text-text-muted">Status</dt>
                         <dd
                           className={`font-mono ${
@@ -421,6 +487,62 @@ export default function KeysPage() {
               </p>
             </div>
 
+            <div>
+              <label className="mb-1 block text-sm font-medium text-text-primary">
+                Allowed models
+              </label>
+              {isUnrestricted(form.allowedModels) ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border-primary bg-bg-secondary px-3 py-2">
+                  <p className="text-xs text-text-muted">
+                    All models. This key can call anything the router exposes.
+                  </p>
+                  <Button variant="ghost" size="sm" onClick={() => setShowModelSelect(true)}>
+                    Restrict
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-text-muted">
+                      {form.allowedModels.length} model
+                      {form.allowedModels.length === 1 ? "" : "s"} allowed. Anything else is
+                      refused with 403 before it reaches a provider.
+                    </p>
+                    <Button variant="ghost" size="sm" onClick={() => setShowModelSelect(true)}>
+                      Edit
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {form.allowedModels.map((m) => (
+                      <span
+                        key={m}
+                        className="inline-flex items-center gap-1 rounded-full bg-bg-tertiary px-2.5 py-1 text-xs text-text-primary"
+                      >
+                        <span className="max-w-[220px] truncate" title={m}>
+                          {m}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeselectModel({ value: m })}
+                          className="text-text-muted hover:text-error"
+                          aria-label={`Remove ${m}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, allowedModels: [WILDCARD] })}
+                    className="text-xs text-text-muted underline hover:text-text-primary"
+                  >
+                    Allow all models again
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-col gap-3">
               <Toggle
                 checked={form.unlimited}
@@ -449,6 +571,20 @@ export default function KeysPage() {
           </div>
         </Modal>
       )}
+
+      {/* Sits outside the key Modal on purpose: the picker is itself a modal
+          and nesting two overlays hides the list behind the form. */}
+      <ModelSelectModal
+        isOpen={showModelSelect}
+        onClose={() => setShowModelSelect(false)}
+        onSelect={handleAddModel}
+        onDeselect={handleDeselectModel}
+        activeProviders={providers}
+        modelAliases={modelAliases}
+        title="Allowed models for this key"
+        addedModelValues={isUnrestricted(form.allowedModels) ? [] : form.allowedModels}
+        closeOnSelect={false}
+      />
     </div>
-  );
+  )
 }

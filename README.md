@@ -169,6 +169,43 @@ Usage. Key cards show remaining credit, lifetime spend, whether the key is
 blocked, the tier's ratio and rate cap, and live tier occupancy. A tier at its
 key cap is labelled as full in the picker before you submit.
 
+### Per-key model allow-list
+
+An API key can be restricted to specific models. The pick is made in the key
+form with the same model browser Combos uses, so the list is whatever the
+router actually exposes rather than a hand-typed guess.
+
+```json
+["gpt-4o", "claude-sonnet-4"]   // exact ids
+["gpt-4*"]                      // prefix family
+["*"]                           // unrestricted (the default)
+```
+
+Matching strips provider prefixes, so a key configured with
+`deepseek-v4-flash` still matches a request for `dahono/deepseek-v4-flash`,
+and tolerates the doubled prefix a router can produce when it prepends a
+provider to an already-qualified id. A bare string in the stored value is
+treated as one pattern rather than being read as "allow everything", so a
+hand-edited row cannot quietly widen access.
+
+Behaviour worth knowing:
+
+- The check runs **before** the quota guard, so a model a key may never call is
+  refused with `403 model_not_allowed` even when the key has credit.
+- It is **independent of the tier system** — a key with no tier can still be
+  restricted. It shares none of the tier code's "feature off" short-circuits.
+- A refused call is never charged: balance and `lifetimeCharge` are untouched.
+- Keys created before this existed read back as `["*"]` and behave exactly as
+  before. Editing one without touching models saves no change.
+- Internal model probes (the dashboard's model tester) are exempt, for the
+  same reason they are exempt from quota: they are an operator action.
+- A partial `PUT` only writes the fields present in the body, so renaming a key
+  does not reset its restriction.
+
+Verified end to end in `allowlist_e2e.py` (23 checks): 403 on a denied model,
+200 on an allowed one, no charge on refusal, wildcard grant and refusal,
+legacy defaults, and tier rate caps still firing for a restricted key.
+
 ### Model probes are outside quota
 
 The dashboard's "test model" button used to send a real API key, so testing
@@ -249,6 +286,7 @@ Behaviour above is covered by `scripts/e2e/`, each run against a live instance:
 | `usage_agg_e2e.py` | usage aggregates to the right tier, with unattributed rows called out rather than folded into the first tier |
 | `keys_crud_e2e.py` | tier, balance and unlimited round-trip through the key API; unknown tiers are rejected |
 | `probe_billing_e2e.py` | a model test spends no credit and is not blocked by an empty balance, while real traffic still is |
+| `allowlist_e2e.py` | a restricted key is refused with 403 for other models, still works for the ones it has, and is never charged for a refusal |
 
 Unit tests: `cd backend && npx vitest run`.
 

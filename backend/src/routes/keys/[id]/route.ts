@@ -45,7 +45,7 @@ export async function PUT_handler(req, res, { params }) {
   try {
     const { id } = await params;
     const body = req.body || {};
-    const { name, isActive, balance, userGroup, unlimited } = body;
+    const { name, isActive, balance, userGroup, unlimited, allowedModels } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -54,12 +54,15 @@ export async function PUT_handler(req, res, { params }) {
 
     await assertTierAcceptsKey(userGroup, id);
 
-    const updateData = {};
+    // Only the fields present in the body are sent, so a partial edit (e.g.
+    // renaming a key) never resets a restriction or a balance it did not mention.
+    const updateData: Record<string, unknown> = {};
     if (name !== undefined) updateData.name = name;
     if (isActive !== undefined) updateData.isActive = !!isActive;
     if (balance !== undefined) updateData.balance = Number(balance);
     if (userGroup !== undefined) updateData.userGroup = userGroup || null;
     if (unlimited !== undefined) updateData.unlimited = !!unlimited;
+    if (allowedModels !== undefined) updateData.allowedModels = allowedModels;
 
     const updated = await updateApiKey(id, updateData);
 

@@ -83,9 +83,14 @@ export const TABLES = {
       unlimited: "INTEGER DEFAULT 0",
       // Running total of what this key has been charged, across all tiers.
       // Promotion thresholds (userGroups.min/max) are measured against this
-      // instead of a live SUM over usageHistory, so the check stays O(1) and
-      // stays correct even after the tier's ratio changes over time.
+      // rather than a live SUM over usageHistory, so the check stays O(1)
+      // and stays correct even as the tier's ratio changes over time.
       lifetimeCharge: "REAL DEFAULT 0",
+      // JSON array of model patterns this key may call. ["*"] (the
+      // default) allows everything, which is how keys created before this
+      // column existed keep working. Patterns may be exact ("gpt-4o"),
+      // prefix wildcards ("gpt-4*"), or "*".
+      allowedModels: "TEXT DEFAULT '[\"*\"]'",
       createdAt: "TEXT NOT NULL",
     },
     indexes: [

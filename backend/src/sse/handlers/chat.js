@@ -33,7 +33,7 @@ async function getCliToken() {
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
-import { enforceTierQuota } from "./tierQuota.js";
+import { enforceTierQuota, enforceModelAllowlist } from "./tierQuota.js";
 
 /**
  * Handle chat completion request
@@ -108,6 +108,15 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  // Per-key model allow-list. Independent of the tier system and checked before
+  // the quota guard so a model the key may never call is refused even if the key
+  // has credit. Internal probes are exempt: the dashboard's model tester is an
+  // operator action, not something a restricted customer key can reach.
+  if (apiKey && !isInternalProbe) {
+    const modelGate = await enforceModelAllowlist(apiKey, modelStr);
+    if (modelGate) return modelGate;
   }
 
   // Tier quota guard (ported from one-hub). No-op unless a tier system is set up.

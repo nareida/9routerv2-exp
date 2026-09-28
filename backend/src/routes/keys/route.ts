@@ -49,7 +49,7 @@ export async function GET(req, res) {
 export async function POST_handler(req, res) {
   try {
     const body = req.body || {};
-    const { name, balance, userGroup, unlimited } = body;
+    const { name, balance, userGroup, unlimited, allowedModels } = body;
 
     if (!name) {
       return res.status(400).json({ error: "Name is required" });
@@ -72,7 +72,7 @@ export async function POST_handler(req, res) {
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId, { balance, userGroup, unlimited });
+    const apiKey = await createApiKey(name, machineId, { balance, userGroup, unlimited, allowedModels });
 
     return res.status(201).json({ key: apiKey.key, ...apiKey });
   } catch (error) {

@@ -14,6 +14,7 @@
 import { getAdapter } from "../../lib/db/driver.js";
 import { getGroupCache } from "../../lib/billing/userGroupRepo.js";
 import { checkQuota, estimateCost, loadPricingForModel } from "../../lib/billing/quotaGuard.js";
+import { modelAllowed } from "../../lib/db/repos/apiKeysRepo.js";
 import { errorResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
@@ -31,6 +32,38 @@ function estimatePromptTokens(body) {
     chars += String(c).length;
   }
   return Math.ceil(chars / 4);
+}
+
+/**
+ * Per-key model allow-list gate.
+ *
+ * Independent of the tier system: a key may be restricted to a few models even
+ * when no userGroups rows exist, so this runs before enforceTierQuota and does
+ * not share its "feature off" short-circuit. A missing or wildcard list allows
+ * everything, which is how every key created before the column existed behaves.
+ *
+ * @returns {Promise<Response|null>} a 403 when the model is not permitted
+ */
+export async function enforceModelAllowlist(apiKey, modelStr) {
+  if (!apiKey || !modelStr) return null;
+  try {
+    const adapter = await getAdapter();
+    const row = await adapter.get("SELECT id, allowedModels FROM apiKeys WHERE key = ?", [apiKey]);
+    if (!row) return null;
+    if (modelAllowed(modelStr, row.allowedModels)) return null;
+
+    log.warn("MODEL_ALLOWLIST", `key ${String(row.id).slice(0, 8)} may not use "${modelStr}"`);
+    // 403 already carries type "permission_error"; the code is left as the
+    // generic one so the client sees a permission failure, not a quota one.
+    return errorResponse(
+      HTTP_STATUS.FORBIDDEN,
+      `model_not_allowed: this key is not permitted to use "${modelStr}"`,
+    );
+  } catch (e) {
+    // Never block a request because the allow-list could not be read.
+    log.warn("MODEL_ALLOWLIST", `allowlist check failed, allowing request: ${e?.message ?? e}`);
+    return null;
+  }
 }
 
 export async function enforceTierQuota(apiKey, body, modelStr) {
