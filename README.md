@@ -135,6 +135,69 @@ Browse all skills in the Dashboard → Skills page or in the [`skills/`](./skill
 
 This version contains local patches for the VPS deployment, maintained by Nareida. The following changes were made on top of the 9Router v2 source and are backed up to this public snapshot.
 
+### User tiers and quota billing
+
+A tier system where an API key belongs to a tier, and the tier sets the cost
+ratio and rate limit while the key carries the balance that gets charged.
+
+- **`userGroups`** gains `maxKeys`. `min` and `max` are a consumption window
+  measured against `apiKeys.lifetimeCharge` — the tier applies while
+  `min <= lifetimeCharge < max`, with `max = 0` meaning open-ended. The key
+  count cap is deliberately a separate column rather than reusing `max`, which
+  previously meant two different things in two different places.
+- **One cost implementation.** `computeCharge.js` holds the arithmetic so the
+  pre-flight estimate and the post-request settle cannot drift. They previously
+  kept separate copies.
+- **Two-phase billing.** `quotaGuard.js` checks before the request, at
+  `userGroups.min/max`, key balance and the `apiRate` sliding window;
+  `chargeRequest.js` settles afterwards from the reported usage.
+- **`apiRate`** is a per-`${tier}:${keyId}` sliding window, in memory, reset on
+  restart.
+- **Promotion** moves a key onto the tier whose window contains its lifetime
+  spend, and is skipped when that tier is at `maxKeys`.
+- **Streams bill identically** to non-streams. A request without an explicit
+  `stream` flag is treated as non-stream unless the provider requires
+  streaming or the native format implies it.
+- **Unknown tiers are rejected** on key create and update, and keys left
+  pointing at a deleted tier are reported by `GET /api/user-groups` as orphans
+  rather than silently running without enforcement.
+- **No payment integration.** Tiers are funded by internal credits only; the
+  One Hub recharge subsystem was not ported.
+
+Dashboard: **User Tiers** and **API Keys** pages, plus a **Per Tier** tab under
+Usage. Key cards show remaining credit, lifetime spend, whether the key is
+blocked, the tier's ratio and rate cap, and live tier occupancy. A tier at its
+key cap is labelled as full in the picker before you submit.
+
+### Model probes are outside quota
+
+The dashboard's "test model" button used to send a real API key, so testing
+every model reported `429 insufficient_quota` or `402` whenever that key's
+balance was low — the credit looked broken, not the models. Probes now identify
+with the CLI token and skip the key requirement, the tier guard and billing.
+Ordinary traffic is unaffected: it is still billed, and a depleted key is still
+refused with `429`.
+
+### Soul monitoring
+
+A passive response scanner plus a canary token, wired into the non-stream,
+stream and SSE-to-JSON paths. The scanner never alters a response and never
+fails a request. The verdict is stored in `usageHistory.meta`, so the dashboard
+reads the same record the server wrote rather than recomputing it.
+
+### Model ID handling in the dashboard
+
+Model IDs could arrive already prefixed (imported from `/models`, or copied out
+of the list). A single prefix strip left `dahono/dahono/x`, which then failed to
+route. The strip now removes every leading alias layer.
+
+### Test data isolation
+
+`backend/vitest.config.js` points the suite at a throwaway `DATA_DIR`.
+`userGroupRepo.test.js` deletes all tiers in its `beforeEach`; running it against
+a live data directory silently wiped the real tiers on every `vitest run` and
+recreated them from fixture values.
+
 ### Upstream context metadata
 
 - `/v1/models` now adds `context_length` for available LLM models.
@@ -166,7 +229,28 @@ This version contains local patches for the VPS deployment, maintained by Nareid
 ### Repository and privacy
 
 - This repository is public. Upstream OAuth client credentials (Gemini CLI, iFlow, and Antigravity) remain part of the upstream source; they are not Boss's runtime API keys, OAuth tokens, or database credentials.
+- Those OAuth client credentials ship in the upstream 9router source and were
+  present from its initial commit. They are included here unchanged so the
+  snapshot stays faithful to the base it documents. Anyone running their own
+  OAuth app should register their own client id and secret and override these.
 - This README contains no tokens or secrets.
+
+### Verification
+
+Behaviour above is covered by `scripts/e2e/`, each run against a live instance:
+
+| Script | What it proves |
+|---|---|
+| `billing_e2e.py` | non-stream requests are charged, unlimited keys are exempt, a depleted key is refused with `429` |
+| `stream_billing_e2e.py` | explicit `stream: true` settles the same way and produces SSE frames |
+| `rate_limit_e2e.py` | the `apiRate` sliding window blocks request N+1, and an uncapped tier does not |
+| `tier_limits_e2e.py` | `maxKeys` rejects the over-cap key with `409`, a disabled key frees its slot, and promotion follows the consumption window |
+| `occupancy_e2e.py` | the occupancy shown against `maxKeys` tracks reality |
+| `usage_agg_e2e.py` | usage aggregates to the right tier, with unattributed rows called out rather than folded into the first tier |
+| `keys_crud_e2e.py` | tier, balance and unlimited round-trip through the key API; unknown tiers are rejected |
+| `probe_billing_e2e.py` | a model test spends no credit and is not blocked by an empty balance, while real traffic still is |
+
+Unit tests: `cd backend && npx vitest run`.
 
 ---
 
