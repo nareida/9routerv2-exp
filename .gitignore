@@ -1,0 +1,59 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.DS_Store
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js / framework specifics if any
+.next/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Database files — must never be committed
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Runtime generated directories
+backend/profiles/
+backend/src/automation/profiles/
+backend/canva_debug/
+har/
+
+# Screenshots produced while verifying UI. Local artifacts, not source.
+/*.png
+
+# Live data directory. Holds the SQLite DB (API keys, provider credentials,
+# balances, usage history) plus automation browser profiles for other people's
+# accounts. Never committed — .data is the running instance's state.
+.data/
+.test-data/
+**/storage/
+**/startupCache/
+**/cache2/
+**/sessionStorage/
+
+# Credentials and browser/session state
+auth.json
+credentials.json
+*.key
+*.pem
+*.p12
+*.pfx
+*storage-state*.json
