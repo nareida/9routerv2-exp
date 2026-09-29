@@ -202,6 +202,26 @@ Behaviour worth knowing:
 - A partial `PUT` only writes the fields present in the body, so renaming a key
   does not reset its restriction.
 
+`GET /v1/models` **annotates rather than filters.** The catalog is shared, so
+removing entries would make a client's model list depend on which key it
+happens to be holding, and an operator needs the full list in order to grant
+access. When the request carries a key with a restriction, models outside it
+are returned with `restricted: true` and an `unavailable_reason` naming the
+allow-list. A client with a model picker can grey those out and warn up front
+instead of discovering the restriction at call time.
+
+```json
+{ "id": "gpt-4o", "object": "model", "owned_by": "openai" }
+{ "id": "cf", "object": "model", "owned_by": "combo",
+  "restricted": true,
+  "unavailable_reason": "not permitted for this API key (allowed: gpt-4o)" }
+```
+
+An absent, unrecognised or unrestricted key gets the plain catalog with no
+annotations, and a failed key lookup never breaks the list. `restricted` is
+absent rather than `false` on permitted models, so a client can test for its
+presence.
+
 Verified end to end in `allowlist_e2e.py` (23 checks): 403 on a denied model,
 200 on an allowed one, no charge on refusal, wildcard grant and refusal,
 legacy defaults, and tier rate caps still firing for a restricted key.
@@ -287,6 +307,7 @@ Behaviour above is covered by `scripts/e2e/`, each run against a live instance:
 | `keys_crud_e2e.py` | tier, balance and unlimited round-trip through the key API; unknown tiers are rejected |
 | `probe_billing_e2e.py` | a model test spends no credit and is not blocked by an empty balance, while real traffic still is |
 | `allowlist_e2e.py` | a restricted key is refused with 403 for other models, still works for the ones it has, and is never charged for a refusal |
+| `catalog_annotation_e2e.py` | `/v1/models` keeps the full catalog and flags what a key may not use, and the flag agrees with what the gate actually enforces |
 
 Unit tests: `cd backend && npx vitest run`.
 
