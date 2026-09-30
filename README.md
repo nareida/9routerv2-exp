@@ -169,6 +169,24 @@ Usage. Key cards show remaining credit, lifetime spend, whether the key is
 blocked, the tier's ratio and rate cap, and live tier occupancy. A tier at its
 key cap is labelled as full in the picker before you submit.
 
+### Remaining-quota bar
+
+Each key card shows how much of its credit is left as a bar with a
+percentage. The figure is of the credit that key has ever held — balance plus
+lifetimeCharge — not of the balance alone, so a key topped up to 1,000,000 that
+has spent 900,000 reads as 10% rather than as an empty bar.
+
+Tones follow the pattern already used by the provider quota table: green above
+30% left, yellow from 10% to 30%, red below 10%, and an empty track with
+"habis — request ditolak" once the balance reaches zero. Unlimited keys get no
+bar, since they are never at risk.
+
+The bar is deliberately **not** drawn from `usageHistory`. Charges are applied
+to `apiKeys.balance` and `lifetimeCharge` and are not recorded in that table, so
+a chart built from it would show a flat line while credit was actually being
+spent. These two counters are the numbers the quota gate itself uses, which
+means the bar cannot disagree with what actually blocks a request.
+
 ### Per-key model allow-list
 
 An API key can be restricted to specific models. The pick is made in the key

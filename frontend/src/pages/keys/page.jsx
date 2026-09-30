@@ -9,6 +9,7 @@ import {
   CardSkeleton,
   ModelSelectModal,
 } from "@/shared/components";
+import QuotaBar from "./QuotaBar";
 
 // API key management. Every key belongs to a tier; the tier supplies the cost
 // ratio and the per-minute request cap, and the key supplies the balance that
@@ -348,7 +349,7 @@ export default function KeysPage() {
 
                     <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
                       <div className="flex gap-1.5">
-                        <dt className="text-text-muted">Sisa kuota</dt>
+                        <dt className="text-text-muted">Sisa</dt>
                         <dd className="font-mono text-text-primary">
                           {k.unlimited ? "∞ unlimited" : fmtBalance(k.balance)}
                         </dd>
@@ -392,6 +393,18 @@ export default function KeysPage() {
                                 : "aktif"}
                         </dd>
                       </div>
+                      {!k.unlimited && (
+                        <div className="basis-full">
+                          <dt className="mb-1 text-text-muted">Sisa kuota</dt>
+                          <dd>
+                            <QuotaBar
+                              balance={k.balance}
+                              lifetimeCharge={k.lifetimeCharge}
+                              unlimited={k.unlimited}
+                            />
+                          </dd>
+                        </div>
+                      )}
                       {tier && (
                         <>
                           <div className="flex gap-1.5">
