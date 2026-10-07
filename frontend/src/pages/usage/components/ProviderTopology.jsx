@@ -260,7 +260,10 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   const fitOpts = { padding: 0.2, duration: 200 };
   const onInit = useCallback((instance) => {
     rfInstance.current = instance;
-    setTimeout(() => instance.fitView(fitOpts), 50);
+    // minZoom keeps the fit from shrinking the graph into unreadability: the
+    // layout is a wide ellipse, so an unbounded fit lands around scale 0.35 on
+    // a phone and the node labels stop being legible.
+    setTimeout(() => instance.fitView({ ...fitOpts, minZoom: 0.45 }), 50);
   }, []);
 
   // Re-fit on container resize
@@ -295,12 +298,18 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={fitOpts}
-          minZoom={0.1}
+          fitViewOptions={{ ...fitOpts, minZoom: 0.45 }}
+          minZoom={0.45}
           maxZoom={2}
           onInit={onInit}
           proOptions={{ hideAttribution: true }}
-          panOnDrag
+          // Mouse / trackpad pans with a plain drag. A touch drag scrolls the
+          // page instead, so a two-finger drag pans the graph (panOnScroll)
+          // while one finger keeps scrolling the portal itself.
+          panOnDrag={[1, 2]}
+          panOnScroll
+          selectionOnDrag={false}
+          multiSelectionKeyCode={null}
           zoomOnScroll
           zoomOnPinch
           zoomOnDoubleClick
@@ -309,7 +318,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
           nodesConnectable={false}
           elementsSelectable={false}
         >
-          <Controls showInteractive={false} className="react-flow-controls-custom" />
+          <Controls showInteractive className="react-flow-controls-custom" />
         </ReactFlow>
       )}
     </div>

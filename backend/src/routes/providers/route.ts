@@ -142,6 +142,7 @@ export async function POST_handler(req, res) {
         apiType: node.apiType,
         baseUrl: node.baseUrl,
         nodeName: node.name,
+        soulMode: node.soulMode === true,
       };
     } else if (isAnthropicCompatibleProvider(provider)) {
       const node = await getProviderNodeById(provider);

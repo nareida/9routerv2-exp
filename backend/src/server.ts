@@ -33,8 +33,35 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", version: "0.5.0", ts: Date.now() });
 });
 
+// ─── Static frontend (9router-dist) ───────────────────────────────────────────
+import path from "path";
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = process.env.DIST_DIR
+  ? path.resolve(process.env.DIST_DIR)
+  : path.resolve(__dirname, "../../frontend/dist");
+app.use(express.static(DIST_DIR, { index: false, etag: true, lastModified: true, setHeaders: (res, filePath) => {
+  if (filePath.endsWith(".html")) {
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
+  } else {
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  }
+} }));
+// SPA fallback: serve index.html for non-API, non-v1 routes
+app.get("/", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache, must-revalidate");
+  res.sendFile(path.join(DIST_DIR, "index.html"));
+});
+
 // ─── Auth Middleware ───────────────────────────────────────────────────────────
-app.use(authMiddleware);
+// Only enforce auth on API/LLM paths — SPA routes are handled by static serving
+app.use((req, res, next) => {
+  const p = req.path;
+  if (!p.startsWith("/api") && !p.startsWith("/v1") && !p.startsWith("/v1beta")) {
+    return next();
+  }
+  authMiddleware(req, res, next);
+});
 
 // ─── Auto-mount all routes ────────────────────────────────────────────────────
 async function start() {
@@ -54,8 +81,14 @@ async function start() {
     apiRouter(req, res, next);
   });
 
-  // ─── 404 Fallback ──────────────────────────────────────────────────────────
-  app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+  // ─── SPA Fallback + 404 ────────────────────────────────────────────────────
+  // Non-API, non-asset GET requests that reach here are SPA routes (e.g. /dashboard)
+  app.use((req, res) => {
+    if (req.method === "GET" && !req.path.startsWith("/api") && !req.path.startsWith("/v1") && !req.path.startsWith("/v1beta") && !path.extname(req.path)) {
+      return res.sendFile(path.join(DIST_DIR, "index.html"));
+    }
+    res.status(404).json({ error: "Not found" });
+  });
 
   // ─── Error Handler ─────────────────────────────────────────────────────────
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

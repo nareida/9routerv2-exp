@@ -14,6 +14,9 @@ const Usage           = lazy(() => import("./pages/usage/page"));
 const Quota           = lazy(() => import("./pages/quota/page"));
 const ProxyPools      = lazy(() => import("./pages/proxy-pools/page"));
 const Combos          = lazy(() => import("./pages/combos/page"));
+const UserGroups      = lazy(() => import("./pages/user-groups/page"));
+const Keys            = lazy(() => import("./pages/keys/page"));
+const Soul            = lazy(() => import("./pages/soul/page"));
 const Endpoint        = lazy(() => import("./pages/endpoint/page"));
 const Translator      = lazy(() => import("./pages/translator/page"));
 const CliTools        = lazy(() => import("./pages/cli-tools/page"));
@@ -31,6 +34,7 @@ const MediaProviderKindId = lazy(() => import("./pages/media-providers/[kind]/[i
 const MediaProviderComboDetail = lazy(() => import("./pages/media-providers/combo/[id]/page"));
 const WeavyPool          = lazy(() => import("./pages/providers/weavy/pool/page"));
 const AmmailTutorial     = lazy(() => import("./pages/automation/ammail-tutorial/page"));
+const Portal              = lazy(() => import("./pages/portal/page"));
 
 // Auth guard — check if dashboard session cookie is present
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -58,6 +62,8 @@ export default function App() {
           <Route path="/"       element={<Navigate to="/login" replace />} />
           <Route path="/login"  element={<Login />} />
           <Route path="/callback" element={<Callback />} />
+          {/* Public usage portal — auth is the API key itself, not a session */}
+          <Route path="/portal"  element={<Portal />} />
 
           {/* Protected dashboard */}
           <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
@@ -71,6 +77,9 @@ export default function App() {
             {/* Pricing settings page omitted in v2 currently */}
             <Route path="proxy-pools"     element={<ProxyPools />} />
             <Route path="combos"          element={<Combos />} />
+            <Route path="user-groups"     element={<UserGroups />} />
+            <Route path="keys"            element={<Keys />} />
+            <Route path="soul"            element={<Soul />} />
             <Route path="endpoint"        element={<Endpoint />} />
             <Route path="translator"      element={<Translator />} />
             <Route path="cli-tools"       element={<CliTools />} />

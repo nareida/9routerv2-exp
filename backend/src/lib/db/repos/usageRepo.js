@@ -27,6 +27,31 @@ const connCache = global._connectionMapCache;
 
 export const statsEmitter = global._statsEmitter;
 
+/**
+ * Resolve which key made a request, at write time.
+ *
+ * usageHistory.apiKey is stored masked, so it can never be joined back to
+ * apiKeys later — the tier and the key identity have to be captured while the
+ * raw bearer token is still in hand. We snapshot the key's *id* rather than
+ * the secret itself, so attribution is exact without duplicating credentials
+ * into the usage table.
+ *
+ * Returns nulls (never a guess) so unattributable usage stays visibly
+ * unattributed instead of landing in the wrong key or tier.
+ */
+async function resolveKeyContext(rawKey) {
+  if (!rawKey || typeof rawKey !== "string") return { keyId: null, userGroup: null };
+  // A masked value contains "..." and can never match a real key.
+  if (rawKey.includes("...")) return { keyId: null, userGroup: null };
+  try {
+    const db = await getAdapter();
+    const row = db.get("SELECT id, userGroup FROM apiKeys WHERE key = ?", [rawKey]);
+    return { keyId: row?.id ?? null, userGroup: row?.userGroup ?? null };
+  } catch {
+    return { keyId: null, userGroup: null };
+  }
+}
+
 function getLocalDateKey(timestamp) {
   const d = timestamp ? new Date(timestamp) : new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -251,16 +276,24 @@ export async function saveRequestUsage(entry) {
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
     const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
 
+    // Resolve the caller's key id + tier at write time. The request path never
+    // carries the group, and usageHistory.apiKey is stored masked, so it cannot
+    // be joined back to apiKeys later. Snapshotting here is the only way to
+    // attribute usage per user — and we snapshot the id, not the secret.
+    const keyCtx = await resolveKeyContext(entry.apiKey);
+
     // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
     db.transaction(() => {
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta, userGroup, keyId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
+          stringifyJson(tokens), stringifyJson(entry.meta || {}),
+          entry.userGroup || keyCtx.userGroup,
+          entry.keyId || keyCtx.keyId,
         ]
       );
 

@@ -8,7 +8,7 @@ vi.mock("child_process", () => {
   };
 });
 
-vi.mock("@/lib/localDb", () => ({
+vi.mock("../src/lib/localDb.js", () => ({
   updateProviderConnection: vi.fn(),
 }));
 

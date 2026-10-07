@@ -3,7 +3,8 @@ import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { FORMATS } from "../../translator/formats.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
-import { saveRequestDetail, appendRequestLog } from "@/lib/usageDb.js";
+import { saveRequestDetail, appendRequestLog } from "../../../src/lib/usageDb.js";
+import { scanResponse, soulMeta } from "../../../src/soul/monitor.js";
 
 function textFromResponsesMessageItem(item) {
   if (!item?.content || !Array.isArray(item.content)) return "";
@@ -98,7 +99,7 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, trackDone, appendLog }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, trackDone, appendLog, soulCanary }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && provider === "codex");
   if (!isSSE) return null; // not handled here
@@ -196,7 +197,21 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
     const usage = parsed.usage || {};
     appendLog({ tokens: usage, status: "200 OK" });
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint });
+
+    // Nareida layer: passive red-team scan. Fail-open — never alters the response.
+    const soul = scanResponse(parsed, { expectCanary: !!soulCanary });
+    if (soul.leaked) {
+      console.warn(`[Soul] LEAK (sse->json) provider=${provider} model=${model} snippet="${soul.snippet}"`);
+    }
+    if (soulCanary && !soul.canary) {
+      console.warn(`[Soul] canary ${soulCanary} not echoed — override may have been dropped (provider=${provider})`);
+    }
+
+    saveUsageStats({
+      provider, model, tokens: usage, connectionId, apiKey,
+      endpoint: clientRawRequest?.endpoint,
+      meta: soulMeta(soul),
+    });
 
     const totalLatency = Date.now() - requestStartTime;
     saveRequestDetail(buildRequestDetail({
@@ -206,7 +221,10 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
       response: {
         content: parsed.choices?.[0]?.message?.content || null,
         thinking: parsed.choices?.[0]?.message?.reasoning_content || null,
-        finish_reason: parsed.choices?.[0]?.finish_reason || "unknown"
+        finish_reason: parsed.choices?.[0]?.finish_reason || "unknown",
+        soul_ok: !soul.leaked,
+        soul_leak: soul.snippet || null,
+        soul_canary: soul.canary || null,
       },
       status: "success"
     }, { endpoint: clientRawRequest?.endpoint || null })).catch(() => {});

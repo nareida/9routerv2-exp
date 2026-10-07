@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import useThemeStore from "@/store/themeStore";
+import useThemeStore from "../../store/themeStore.js";
 
 // Subscribe to system theme changes
 function subscribeToSystemTheme(callback) {

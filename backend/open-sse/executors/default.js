@@ -5,14 +5,44 @@ import { buildClineHeaders } from "../../src/shared/utils/clineAuth.js";
 import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { injectSoul } from "../../src/soul/index.js";
 
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
     let transformed = this.applyJsonSchemaFallback(body);
+
+    // SOUL MODE: for OpenAI-compatible nodes with soulMode enabled,
+    // move system messages into the first user message (as an identity override block)
+    // and drop the system role entirely. Defeats upstream-injected system prompts
+    // (e.g. Qoder persona on clouvia deepseek) that override the client's persona.
+    // Nareida layer: the block also carries a SOUL_ID canary so the response
+    // scanner can tell whether the model actually honoured the override.
+    if (this.provider?.startsWith("openai-compatible-") &&
+        credentials?.providerSpecificData?.soulMode === true &&
+        Array.isArray(transformed.messages)) {
+      const sysTexts = [];
+      transformed.messages.forEach(m => {
+        if (m.role === "system") {
+          if (typeof m.content === "string") sysTexts.push(m.content);
+          else if (Array.isArray(m.content)) {
+            sysTexts.push(m.content.filter(p => p?.type === "text").map(p => p.text).join("\n"));
+          }
+        }
+      });
+      if (sysTexts.length > 0) {
+        const soulText = sysTexts.filter(Boolean).join("\n\n");
+        const { body: injected, canary } = injectSoul(transformed, soulText);
+        if (canary) {
+          this.soulCanary = canary;
+          this.soulInjected = true;
+        }
+        transformed = injected;
+      }
+    }
 
     if (this.provider === "codebuddy" || this.provider === "cb") {
       let messages = Array.isArray(transformed.messages) ? transformed.messages.map(m => ({ ...m })) : [];

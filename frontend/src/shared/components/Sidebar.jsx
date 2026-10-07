@@ -21,6 +21,9 @@ const navItems = [
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
   // { href: "/dashboard/basic-chat", label: "Basic Chat", icon: "chat" }, // Hidden
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
+  { href: "/dashboard/user-groups", label: "User Tiers", icon: "group" },
+  { href: "/dashboard/keys", label: "API Keys", icon: "key" },
+  { href: "/dashboard/soul", label: "Soul Monitor", icon: "radar" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
   { href: "/dashboard/quota", label: "Quota Tracker", icon: "data_usage" },
   { href: "/dashboard/mitm", label: "MITM", icon: "security" },

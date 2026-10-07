@@ -16,9 +16,24 @@ import { handleComboChat } from "open-sse/services/combo.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
+import { getConsistentMachineId } from "../../shared/utils/machineId.js";
+
+// Internal health probes (the dashboard's "test model" button) identify
+// themselves with this token. It is derived from the machine id, so it is not
+// reachable from outside the host, and it lets chat.js tell a probe apart from
+// real user traffic without loosening auth for anyone.
+const CLI_TOKEN_SALT = "9r-cli-auth";
+const CLI_TOKEN_HEADER = "x-9r-cli-token";
+
+let cachedCliToken = null;
+async function getCliToken() {
+  if (!cachedCliToken) cachedCliToken = await getConsistentMachineId(CLI_TOKEN_SALT);
+  return cachedCliToken;
+}
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { enforceTierQuota, enforceModelAllowlist } from "./tierQuota.js";
 
 /**
  * Handle chat completion request
@@ -65,9 +80,20 @@ export async function handleChat(request, clientRawRequest = null) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
+  // Internal health probes (the dashboard's "test model" button) carry the CLI
+  // token. They are a liveness check against the provider, not user traffic, so
+  // they skip the API-key requirement, the tier quota guard and post-request
+  // billing. Without this, testing a model on a key with a low balance reports
+  // every model as failing with 429/402 — the credit, not the model, is broken.
+  const cliTokenHeader =
+    request?.headers?.get?.(CLI_TOKEN_HEADER) ??
+    request?.headers?.[CLI_TOKEN_HEADER];
+  const isInternalProbe =
+    !!cliTokenHeader && cliTokenHeader === (await getCliToken());
+
   // Enforce API key if enabled in settings
   const settings = await getSettings();
-  if (settings.requireApiKey) {
+  if (settings.requireApiKey && !isInternalProbe) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
@@ -82,6 +108,23 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  // Per-key model allow-list. Independent of the tier system and checked before
+  // the quota guard so a model the key may never call is refused even if the key
+  // has credit. Internal probes are exempt: the dashboard's model tester is an
+  // operator action, not something a restricted customer key can reach.
+  if (apiKey && !isInternalProbe) {
+    const modelGate = await enforceModelAllowlist(apiKey, modelStr);
+    if (modelGate) return modelGate;
+  }
+
+  // Tier quota guard (ported from one-hub). No-op unless a tier system is set up.
+  // Internal probes are exempt: they cost one token and exist to check that a
+  // provider answers, so a depleted balance must not read as a dead model.
+  if (apiKey && !isInternalProbe) {
+    const gate = await enforceTierQuota(apiKey, body, modelStr);
+    if (gate) return gate;
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots

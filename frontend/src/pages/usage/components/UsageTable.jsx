@@ -4,7 +4,7 @@ import PropTypes from "prop-types";
 import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
 
-const fmt = (n) => new Intl.NumberFormat().format(n || 0);
+import { fmt } from "@/pages/usage/components/tokens";
 const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
 
 function fmtTime(iso) {

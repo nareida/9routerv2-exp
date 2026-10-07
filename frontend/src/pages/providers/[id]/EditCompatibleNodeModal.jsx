@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Button, Badge, Input, Modal, Select } from "@/shared/components";
+import { Button, Badge, Input, Modal, Select, Toggle } from "@/shared/components";
 
 export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
   const [formData, setFormData] = useState({
@@ -9,6 +9,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     prefix: "",
     apiType: "chat",
     baseUrl: "https://api.openai.com/v1",
+    soulMode: false,
   });
   const [saving, setSaving] = useState(false);
   const [checkKey, setCheckKey] = useState("");
@@ -23,6 +24,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
         prefix: node.prefix || "",
         apiType: node.apiType || "chat",
         baseUrl: node.baseUrl || (isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+        soulMode: node.soulMode === true,
       });
     }
   }, [node, isAnthropic]);
@@ -43,6 +45,9 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
       };
       if (!isAnthropic) {
         payload.apiType = formData.apiType;
+        // Soul Mode (Nareida layer): strip upstream system prompt, inject the
+        // soul into the first user message, plant a SOUL_ID canary.
+        payload.soulMode = formData.soulMode;
       }
       await onSave(payload);
     } finally {
@@ -106,6 +111,14 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           placeholder={isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"}
           hint={`Use the base URL (ending in /v1) for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
         />
+        {!isAnthropic && (
+          <Toggle
+            label="Soul Mode"
+            description="Strip upstream system prompts, inject your SOUL.md identity block with a canary, and scan the response for persona leaks."
+            checked={formData.soulMode}
+            onChange={(v) => setFormData({ ...formData, soulMode: v })}
+          />
+        )}
         <div className="flex gap-2">
           <Input
             label="API Key (for Check)"
@@ -153,6 +166,7 @@ EditCompatibleNodeModal.propTypes = {
     prefix: PropTypes.string,
     apiType: PropTypes.string,
     baseUrl: PropTypes.string,
+    soulMode: PropTypes.bool,
   }),
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,

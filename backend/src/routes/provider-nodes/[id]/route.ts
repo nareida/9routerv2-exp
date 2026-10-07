@@ -6,7 +6,7 @@ export async function PUT_handler(req, res, { params }) {
   try {
     const { id } = await params;
     const body = req.body;
-    const { name, prefix, apiType, baseUrl } = body;
+    const { name, prefix, apiType, baseUrl, soulMode } = body;
     const node = await getProviderNodeById(id);
 
     if (!node) {
@@ -48,7 +48,7 @@ export async function PUT_handler(req, res, { params }) {
       }
     }
 
-    const updates = {
+    const updates: Record<string, unknown> = {
       name: name.trim(),
       prefix: prefix.trim(),
       baseUrl: sanitizedBaseUrl,
@@ -56,6 +56,11 @@ export async function PUT_handler(req, res, { params }) {
 
     if (node.type === "openai-compatible") {
       updates.apiType = apiType;
+      // Soul Mode (Nareida layer): only stored when the caller sends it, so an
+      // unrelated edit never silently flips the toggle.
+      if (soulMode !== undefined) {
+        updates.soulMode = soulMode === true;
+      }
     }
 
     const updated = await updateProviderNode(id, updates);
@@ -69,6 +74,10 @@ export async function PUT_handler(req, res, { params }) {
           apiType: node.type === "openai-compatible" ? apiType : undefined,
           baseUrl: sanitizedBaseUrl,
           nodeName: updated.name,
+          // Runtime reads soulMode from the connection, not the node.
+          ...(soulMode !== undefined && node.type === "openai-compatible"
+            ? { soulMode: soulMode === true }
+            : {}),
         }
       })
     )));

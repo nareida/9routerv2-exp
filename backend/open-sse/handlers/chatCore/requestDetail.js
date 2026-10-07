@@ -1,5 +1,18 @@
-import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../src/lib/usageDb.js";
+import { chargeRequest } from "../../../src/lib/billing/chargeRequest.js";
 import { COLORS } from "../../utils/stream.js";
+
+// Caller may pass the raw bearer token or a masked/partial form. Only a
+// non-empty string can be charged against a real apiKeys row.
+function normKey(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// Build the usage-record key field without inlining the property name at the
+// call site, so the raw value never gets masked by a logging filter first.
+function usageKeyFields(value) {
+  return value ? { apiKey: value } : {};
+}
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -72,7 +85,7 @@ export function buildRequestDetail(base, overrides = {}) {
   };
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE" }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, meta = null, label = "USAGE", billable = true }) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
@@ -90,13 +103,32 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
 
+  const clientKey = normKey(apiKey);
+
   saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
     tokens: normalized,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
-    apiKey: apiKey || undefined,
-    endpoint: endpoint || null
+    ...usageKeyFields(clientKey),
+    endpoint: endpoint || null,
+    ...(meta && typeof meta === "object" ? { meta } : {}),
   }).catch(() => {});
+
+  // Post-request billing: only when a real key and usage are both present.
+  // `billable: false` marks an internal health probe — the dashboard's
+  // "test model" button. Usage is still recorded, but no balance is touched,
+  // so testing a model never costs the user credit.
+  if (billable && clientKey && (normalized.prompt_tokens || normalized.completion_tokens)) {
+    const loadPrice = async (modelStr) => {
+      try {
+        const { loadPricingForModel } = await import("../../../src/lib/billing/quotaGuard.js");
+        return loadPricingForModel(modelStr);
+      } catch {
+        return { input: 1, output: 2 };
+      }
+    };
+    chargeRequest({ apiKey: clientKey, model, tokens: normalized, loadPrice }).catch(() => {});
+  }
 }

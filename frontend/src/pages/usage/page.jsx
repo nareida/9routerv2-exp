@@ -3,6 +3,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
+import UsageByTier from "./ByTier";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -27,7 +28,7 @@ function UsageContent() {
   const [period, setPeriod] = useState("today");
 
   const tabFromUrl = searchParams.get("tab");
-  const activeTab = tabFromUrl && ["overview", "logs", "details"].includes(tabFromUrl)
+  const activeTab = tabFromUrl && ["overview", "tiers", "logs", "details"].includes(tabFromUrl)
     ? tabFromUrl
     : "overview";
 
@@ -45,6 +46,7 @@ function UsageContent() {
         <SegmentedControl
           options={[
             { value: "overview", label: "Overview" },
+            { value: "tiers", label: "Per Tier" },
             { value: "details", label: "Details" },
           ]}
           value={activeTab}
@@ -68,6 +70,7 @@ function UsageContent() {
         </Suspense>
       )}
       {activeTab === "logs" && <RequestLogger />}
+      {activeTab === "tiers" && <UsageByTier />}
       {activeTab === "details" && <RequestDetailsTab />}
     </div>
   );

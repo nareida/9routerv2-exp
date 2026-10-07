@@ -78,9 +78,25 @@ export const TABLES = {
       name: "TEXT",
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
+      balance: "REAL DEFAULT 0",
+      userGroup: "TEXT DEFAULT 'free'",
+      unlimited: "INTEGER DEFAULT 0",
+      // Running total of what this key has been charged, across all tiers.
+      // Promotion thresholds (userGroups.min/max) are measured against this
+      // rather than a live SUM over usageHistory, so the check stays O(1)
+      // and stays correct even as the tier's ratio changes over time.
+      lifetimeCharge: "REAL DEFAULT 0",
+      // JSON array of model patterns this key may call. ["*"] (the
+      // default) allows everything, which is how keys created before this
+      // column existed keep working. Patterns may be exact ("gpt-4o"),
+      // prefix wildcards ("gpt-4*"), or "*".
+      allowedModels: "TEXT DEFAULT '[\"*\"]'",
       createdAt: "TEXT NOT NULL",
     },
-    indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)",
+      "CREATE INDEX IF NOT EXISTS idx_ak_group ON apiKeys(userGroup)",
+    ],
   },
   combos: {
     columns: {
@@ -117,12 +133,16 @@ export const TABLES = {
       status: "TEXT",
       tokens: "TEXT",
       meta: "TEXT",
+      userGroup: "TEXT",
+      keyId: "TEXT",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_uh_ts ON usageHistory(timestamp DESC)",
       "CREATE INDEX IF NOT EXISTS idx_uh_provider ON usageHistory(provider)",
       "CREATE INDEX IF NOT EXISTS idx_uh_model ON usageHistory(model)",
       "CREATE INDEX IF NOT EXISTS idx_uh_conn ON usageHistory(connectionId)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_group ON usageHistory(userGroup)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_key ON usageHistory(keyId)",
     ],
   },
   usageDaily: {
@@ -182,6 +202,33 @@ export const TABLES = {
       startedAt: "INTEGER",
       finishedAt: "INTEGER",
     },
+  },
+  userGroups: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      symbol: "TEXT NOT NULL UNIQUE",
+      name: "TEXT NOT NULL",
+      ratio: "REAL DEFAULT 1",
+      apiRate: "INTEGER DEFAULT 600",
+      public: "INTEGER DEFAULT 0",
+      promotion: "INTEGER DEFAULT 0",
+      // min/max are the consumption window this tier covers, measured against
+      // apiKeys.lifetimeCharge: the tier applies while
+      //   min <= lifetimeCharge < max   (max 0 = open ended).
+      // This is what promotion walks up. It is NOT a key count — that is
+      // maxKeys below.
+      min: "REAL DEFAULT 0",
+      max: "REAL DEFAULT 0",
+      // Hard cap on how many active keys may sit on this tier. 0 = unlimited.
+      maxKeys: "INTEGER DEFAULT 0",
+      enable: "INTEGER DEFAULT 1",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_ug_symbol ON userGroups(symbol)",
+      "CREATE INDEX IF NOT EXISTS idx_ug_enable ON userGroups(enable)",
+    ],
   },
   ammailOtps: {
     columns: {

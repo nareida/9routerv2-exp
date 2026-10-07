@@ -6,8 +6,9 @@ import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
-import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { appendRequestLog, saveRequestDetail } from "../../../src/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
+import { scanResponse, soulMeta } from "../../../src/soul/monitor.js";
 
 /**
  * Translate non-streaming response body from provider format → OpenAI format.
@@ -132,7 +133,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, soulCanary }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
@@ -163,7 +164,21 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint });
+
+  // Nareida layer: passive red-team scan. Fail-open — never alters the response.
+  const soul = scanResponse(responseBody, { expectCanary: !!soulCanary });
+  if (soul.leaked) {
+    console.warn(`[Soul] LEAK provider=${provider} model=${model} snippet="${soul.snippet}"`);
+  }
+  if (soulCanary && !soul.canary) {
+    console.warn(`[Soul] canary ${soulCanary} not echoed — override may have been dropped (provider=${provider})`);
+  }
+
+  saveUsageStats({
+    provider, model, tokens: usage, connectionId, apiKey,
+    endpoint: clientRawRequest?.endpoint,
+    meta: soulMeta(soul),
+  });
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)
     ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat)
@@ -284,7 +299,10 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     response: {
       content: translatedResponse?.choices?.[0]?.message?.content || translatedResponse?.content || null,
       thinking: translatedResponse?.choices?.[0]?.message?.reasoning_content || translatedResponse?.reasoning_content || null,
-      finish_reason: translatedResponse?.choices?.[0]?.finish_reason || "unknown"
+      finish_reason: translatedResponse?.choices?.[0]?.finish_reason || "unknown",
+      soul_ok: !soul.leaked,
+      soul_leak: soul.snippet || null,
+      soul_canary: soul.canary || null,
     },
     status: "success"
   }, { endpoint: clientRawRequest?.endpoint || null })).catch(err => {

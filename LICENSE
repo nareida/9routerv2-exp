@@ -2,6 +2,17 @@ MIT License
 
 Copyright (c) 2026 ahwanulm
 
+This codebase is a derivative of 9router (https://github.com/feril3/9router-v2),
+which in turn derives from ahwanulm's 9router. A subset — specifically the
+user-tier and quota-billing subsystem under backend/src/lib/billing/ and
+backend/src/sse/handlers/tierQuota.js — is additionally derived from One Hub
+(https://github.com/songquanpeng/one-hub), Copyright 2023 The One Hub Authors,
+licensed under the Apache License, Version 2.0.
+
+Those One Hub derived files carry their own Apache-2.0 header notice and remain
+governed by Apache-2.0. The full derivation list is in README.md, section
+"Credits and licensing".
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

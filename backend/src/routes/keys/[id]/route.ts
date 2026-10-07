@@ -1,5 +1,29 @@
 
 import { deleteApiKey, getApiKeyById, updateApiKey } from "../../../lib/localDb.js";
+import { getAdapter } from "../../../lib/db/driver.js";
+
+/**
+ * Reject a tier that does not exist, so a key can never point at a dangling
+ * tier and silently lose quota enforcement. Also enforces the tier's max-key
+ * cap; `excludeKeyId` keeps a key from counting itself when it is re-saved.
+ */
+async function assertTierAcceptsKey(symbol, excludeKeyId = null) {
+  if (!symbol) return;
+  const db = await getAdapter();
+  const tier = db.get("SELECT symbol FROM userGroups WHERE symbol = ?", [symbol]);
+  if (!tier) {
+    const err = new Error(`Unknown tier: ${symbol}`) as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+  const { checkGroupCapacity } = await import("../../../lib/billing/userGroupRepo.js");
+  const capacity = await checkGroupCapacity(symbol, { excludeKeyId });
+  if (!capacity.ok) {
+    const err = new Error(capacity.reason) as Error & { statusCode?: number };
+    err.statusCode = 409;
+    throw err;
+  }
+}
 
 // GET /api/keys/[id] - Get single key
 export async function GET_handler(req, res, { params }) {
@@ -16,27 +40,39 @@ export async function GET_handler(req, res, { params }) {
   }
 }
 
-// PUT /api/keys/[id] - Update key
+// PUT /api/keys/[id] - Update key (name / active / balance / tier / unlimited)
 export async function PUT_handler(req, res, { params }) {
   try {
     const { id } = await params;
-    const body = req.body;
-    const { isActive } = body;
+    const body = req.body || {};
+    const { name, isActive, balance, userGroup, unlimited, allowedModels } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
       return res.status(404).json({ error: "Key not found" });
     }
 
-    const updateData = {};
-    if (isActive !== undefined) updateData.isActive = isActive;
+    await assertTierAcceptsKey(userGroup, id);
+
+    // Only the fields present in the body are sent, so a partial edit (e.g.
+    // renaming a key) never resets a restriction or a balance it did not mention.
+    const updateData: Record<string, unknown> = {};
+    if (name !== undefined) updateData.name = name;
+    if (isActive !== undefined) updateData.isActive = !!isActive;
+    if (balance !== undefined) updateData.balance = Number(balance);
+    if (userGroup !== undefined) updateData.userGroup = userGroup || null;
+    if (unlimited !== undefined) updateData.unlimited = !!unlimited;
+    if (allowedModels !== undefined) updateData.allowedModels = allowedModels;
 
     const updated = await updateApiKey(id, updateData);
 
     return res.json({ key: updated });
   } catch (error) {
     console.log("Error updating key:", error);
-    return res.status(500).json({ error: "Failed to update key" });
+    const code = error?.statusCode || 500;
+    return res
+      .status(code)
+      .json({ error: code === 400 ? error.message : "Failed to update key" });
   }
 }
 

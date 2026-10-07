@@ -15,10 +15,10 @@
 import { createHash } from "crypto";
 
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { buildCosyHeaders } from "@/lib/qoder/cosy.js";
+import { buildCosyHeaders } from "../../src/lib/qoder/cosy.js";
 import {
   QODER_MODEL_LIST_URL,
-} from "@/lib/qoder/constants.js";
+} from "../../src/lib/qoder/constants.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1h, same as the Kiro catalog

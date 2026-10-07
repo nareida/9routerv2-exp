@@ -1,8 +1,8 @@
-import { getApiKeys } from "../../../lib/localDb.js";
 import { UPDATER_CONFIG } from "../../../shared/constants/config.js";
 import { getConsistentMachineId } from "../../../shared/utils/machineId.js";
 
 const CLI_TOKEN_SALT = "9r-cli-auth";
+const CLI_TOKEN_HEADER = "x-9r-cli-token";
 
 function createSilentWavFile() {
   const sampleRate = 16000;
@@ -37,17 +37,22 @@ function createSilentWavFile() {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+/**
+ * Headers for an internal loopback probe.
+ *
+ * Deliberately sends NO API key. Auth passes on its own via the CLI token
+ * (middleware/auth.ts) and chat.js treats a matching token as an internal
+ * probe, so it skips requireApiKey, enforceTierQuota and chargeRequest.
+ *
+ * A model test is a health check, not user traffic. Billing it against a real
+ * key made every row report failure whenever that key's balance ran low —
+ * the credit was broken, not the model.
+ */
 async function getInternalHeaders() {
-  let apiKey = null;
-  try {
-    const keys = await getApiKeys();
-    apiKey = keys.find((k) => k.isActive !== false)?.key || null;
-  } catch {}
-
-  const headers = { "Content-Type": "application/json" };
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  headers["x-9r-cli-token"] = await getConsistentMachineId(CLI_TOKEN_SALT);
-  return headers;
+  return {
+    "Content-Type": "application/json",
+    [CLI_TOKEN_HEADER]: await getConsistentMachineId(CLI_TOKEN_SALT),
+  };
 }
 
 export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || 3001}`) {
@@ -135,7 +140,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     headers,
     body: JSON.stringify({
       model,
-      max_tokens: 1,
+      max_tokens: 8,
       stream: false,
       messages: [{ role: "user", content: "hi" }],
     }),

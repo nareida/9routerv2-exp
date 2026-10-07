@@ -6,6 +6,7 @@ import {
   isOpenAICompatibleProvider,
 } from "../../../shared/constants/providers.js";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "../../../lib/localDb.js";
+import { getContextWindow } from "../../../lib/db/services/upstreamContext.js";
 import { getDisabledModels } from "../../../lib/disabledModelsDb.js";
 import { resolveKiroModels } from "../../../../open-sse/services/kiroModels.js";
 import { resolveQoderModels } from "../../../../open-sse/services/qoderModels.js";
@@ -207,9 +208,21 @@ export async function buildModelsList(kindFilter) {
       id: combo.name,
       object: "model",
       owned_by: "combo",
+      kind: undefined,
+      context_length: undefined,
     };
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
+    }
+    // Combo window = MAX of member windows (a request that fits the max may
+    // still fail on a smaller member, but the combo can route to the big one).
+    if (combo.kind == null || combo.kind === LLM_KIND) {
+      let comboCtx = null;
+      for (const member of combo.models || []) {
+        const ctx = await getContextWindow(member);
+        if (ctx && (comboCtx == null || ctx > comboCtx)) comboCtx = ctx;
+      }
+      if (comboCtx) entry.context_length = comboCtx;
     }
     models.push(entry);
   }
@@ -355,11 +368,17 @@ export async function buildModelsList(kindFilter) {
         if (!kindFilter.includes(kind)) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId)) continue;
 
-        models.push({
+        const modelEntry = {
           id: `${outputAlias}/${modelId}`,
           object: "model",
           owned_by: outputAlias,
-        });
+          context_length: undefined,
+        };
+        if (kind === LLM_KIND) {
+          const ctx = await getContextWindow(`${outputAlias}/${modelId}`);
+          if (ctx) modelEntry.context_length = ctx;
+        }
+        models.push(modelEntry);
       }
 
       // Merge sub-config models (TTS / embedding) that live on AI_PROVIDERS, not PROVIDER_MODELS
@@ -429,12 +448,67 @@ export async function OPTIONS() {
 }
 
 /**
+ * Resolve the calling API key's model allow-list, for annotating the catalog.
+ *
+ * A missing, invalid or unrestricted key resolves to null, which means "do not
+ * annotate" — the list is a shared catalog and must keep working for anonymous
+ * and for keys with no restriction. This never filters: an operator who has
+ * restricted a key still needs to see the whole catalog in order to grant
+ * access, and a client that caches the list would otherwise see it change the
+ * moment a different key is used.
+ *
+ * The header is read defensively because this handler is mounted through
+ * autoRouter, which mixes an Express request with Web Response returns; the
+ * static type of `req` is therefore not reliable here.
+ */
+async function resolveAllowlist(req: unknown): Promise<string[] | null> {
+  const headers = (req as { headers?: unknown })?.headers;
+  const get = (name: string): string => {
+    if (!headers) return "";
+    const h = headers as { get?: (n: string) => string | null } & Record<string, unknown>;
+    if (typeof h.get === "function") return h.get(name) || "";
+    const v = h[name] ?? h[name.toLowerCase()];
+    return typeof v === "string" ? v : "";
+  };
+  const token = get("authorization").replace(/^Bearer\s+/i, "").trim();
+  if (!token) return null;
+  try {
+    const { getAdapter } = await import("../../../lib/db/driver.js");
+    const { parseAllowedModels } = await import("../../../lib/db/repos/apiKeysRepo.js");
+    const adapter = await getAdapter();
+    const row = await adapter.get("SELECT allowedModels FROM apiKeys WHERE key = ?", [token]);
+    if (!row) return null;
+    const allowed = parseAllowedModels(row.allowedModels);
+    return allowed.includes("*") ? null : allowed;
+  } catch (e) {
+    // A failed lookup must not break the catalog.
+    console.log("allowlist annotation skipped:", (e as Error)?.message);
+    return null;
+  }
+}
+
+/**
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
 export async function GET(req, res) {
   try {
     const data = await buildModelsList([LLM_KIND]);
+
+    const allowed = await resolveAllowlist(req);
+    if (allowed) {
+      // Models the key may not call are kept in the list and flagged instead of
+      // removed: a client with a model picker can then grey them out and warn,
+      // rather than discovering the restriction by hitting 403 at call time.
+      const { modelAllowed } = await import("../../../lib/db/repos/apiKeysRepo.js");
+      for (const m of data) {
+        if (!modelAllowed(m.id, allowed)) {
+          m.restricted = true;
+          m.unavailable_reason = `not permitted for this API key (allowed: ${allowed.join(", ")})`;
+        }
+      }
+    }
+
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

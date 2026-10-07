@@ -1,13 +1,14 @@
 
 
-// Fetch with timeout wrapper
+// Fetch with timeout wrapper — uses undici's origin fetch directly to avoid
+// the patched global fetch (whose connection reuse can stall response flushing
+// in this route; see debug notes). AbortSignal gives a hard timeout.
+import { fetch as originFetch } from "undici";
 const fetchWithTimeout = (url, options, timeout = 10000) => {
-  return Promise.race([
-    fetch(url, options),
-    new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Request timeout")), timeout)
-    )
-  ]);
+  return originFetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(timeout),
+  });
 };
 
 // Validate URL format
@@ -102,7 +103,7 @@ export async function POST_handler(req, res) {
       }
 
       const modelsUrl = `${normalizedBase}/models`;
-      const res = await fetchWithTimeout(modelsUrl, {
+      const probeRes = await fetchWithTimeout(modelsUrl, {
         method: "GET",
         headers: {
           "x-api-key": apiKey,
@@ -111,10 +112,10 @@ export async function POST_handler(req, res) {
         }
       });
 
-      if (res.ok) return res.json({ valid: true });
+      if (probeRes.ok) return res.json({ valid: true });
 
       // Auth errors - no point trying chat fallback
-      if (res.status === 401 || res.status === 403) {
+      if (probeRes.status === 401 || probeRes.status === 403) {
         return res.json({ valid: false, error: "API key unauthorized" });
       }
 
@@ -144,19 +145,19 @@ export async function POST_handler(req, res) {
         });
       }
 
-      return res.json({ valid: false, error: getModelsErrorMessage(res.status) });
+      return res.json({ valid: false, error: getModelsErrorMessage(probeRes.status) });
     }
 
     // OpenAI Compatible Validation (Default)
     const modelsUrl = `${baseUrl.replace(/\/$/, "")}/models`;
-    const res = await fetchWithTimeout(modelsUrl, {
+    const probeRes = await fetchWithTimeout(modelsUrl, {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
 
-    if (res.ok) return res.json({ valid: true });
+    if (probeRes.ok) return res.json({ valid: true });
 
     // Auth errors - no point trying chat fallback
-    if (res.status === 401 || res.status === 403) {
+    if (probeRes.status === 401 || probeRes.status === 403) {
       return res.json({ valid: false, error: "API key unauthorized" });
     }
 
@@ -184,7 +185,7 @@ export async function POST_handler(req, res) {
       });
     }
 
-    return res.json({ valid: false, error: getModelsErrorMessage(res.status) });
+    return res.json({ valid: false, error: getModelsErrorMessage(probeRes.status) });
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     console.error("Error validating provider node:", {

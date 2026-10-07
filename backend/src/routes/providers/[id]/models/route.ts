@@ -400,7 +400,6 @@ export async function GET_handler(req, res, { params }) {
           "Authorization": `Bearer ${connection.apiKey}`,
         },
       });
-
       if (!response.ok) {
         const errorText = await response.text();
         console.log(`Error fetching models from ${connection.provider}:`, errorText);
@@ -411,7 +410,6 @@ export async function GET_handler(req, res, { params }) {
 
       const data = await response.json();
       const models = data.data || data.models || [];
-
       return res.json({
         provider: connection.provider,
         connectionId: connection.id,

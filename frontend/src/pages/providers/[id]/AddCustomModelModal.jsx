@@ -36,9 +36,15 @@ export default function AddCustomModelModal({
     }
   }, [isOpen, defaultKind]);
 
+  // Strip every leading `${providerAlias}/` layer, not just one. A value can
+  // arrive already prefixed (imported from /models, or copied from the list),
+  // so a single strip would leave "dahono/dahono/x" and the prefix would be
+  // re-added below.
   const stripAlias = (id) => {
     const prefix = `${providerAlias}/`;
-    return id.startsWith(prefix) ? id.slice(prefix.length) : id;
+    let out = id;
+    while (out.startsWith(prefix)) out = out.slice(prefix.length);
+    return out;
   };
 
   const handleTest = async () => {

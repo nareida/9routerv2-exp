@@ -4,7 +4,8 @@ import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger }
 import { pipeWithDisconnect } from "../../utils/streamHandler.js";
 import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamHelpers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
-import { saveRequestDetail } from "@/lib/usageDb.js";
+import { saveRequestDetail } from "../../../src/lib/usageDb.js";
+import { scanResponse, soulMeta } from "../../../src/soul/monitor.js";
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -73,7 +74,7 @@ export function handleStreamingResponse({ providerResponse, provider, model, sou
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest }) {
+export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, soulCanary }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
@@ -84,6 +85,18 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     const safeContent = contentObj?.content || "[Empty streaming response]";
     const safeThinking = contentObj?.thinking || null;
 
+    // Nareida layer: scan the assembled streaming text for persona leaks.
+    const soul = scanResponse(
+      { choices: [{ message: { content: contentObj?.content || "" } }] },
+      { expectCanary: !!soulCanary }
+    );
+    if (soul.leaked) {
+      console.warn(`[Soul] LEAK (stream) provider=${provider} model=${model} snippet="${soul.snippet}"`);
+    }
+    if (soulCanary && !soul.canary) {
+      console.warn(`[Soul] canary ${soulCanary} not echoed in stream — override may have been dropped (provider=${provider})`);
+    }
+
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency,
@@ -91,13 +104,20 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       request: extractRequestConfig(body, stream),
       providerRequest: finalBody || translatedBody || null,
       providerResponse: safeContent,
-      response: { content: safeContent, thinking: safeThinking, type: "streaming" },
+      response: {
+        content: safeContent,
+        thinking: safeThinking,
+        type: "streaming",
+        soul_ok: !soul.leaked,
+        soul_leak: soul.snippet || null,
+        soul_canary: soul.canary || null,
+      },
       status: "success"
     }, { id: streamDetailId })).catch(err => {
       console.error("[RequestDetail] Failed to update streaming content:", err.message);
     });
 
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
+    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE", meta: soulMeta(soul) });
   };
 
   return { onStreamComplete, streamDetailId };
